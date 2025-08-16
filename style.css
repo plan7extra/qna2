@@ -45,6 +45,27 @@ html, body {
   color: var(--muted);
 }
 
+/* 인증 상태 스타일 */
+.auth-status {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 14px;
+}
+
 main.container {
   padding: 24px 16px 48px;
 }
@@ -89,6 +110,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
   padding: 10px 14px;
   cursor: pointer;
   font-weight: 600;
+  transition: all 0.2s ease;
 }
 
 .btn-primary { background: var(--primary); color: white; }
@@ -143,5 +165,5 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
   .form-grid { grid-template-columns: 1fr; }
   .tools { flex-direction: column; align-items: stretch; }
   .tools input[type="search"] { width: 100%; }
+  .auth-status { flex-direction: column; align-items: stretch; }
 }
-
