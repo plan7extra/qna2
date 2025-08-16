@@ -15,6 +15,15 @@
     <div class="container">
       <h1 class="logo">Q&A 게시판</h1>
       <p class="subtitle">질문을 올리고 서로 답변해 보세요</p>
+      
+      <!-- 로그인 상태 표시 -->
+      <div id="auth-status" class="auth-status">
+        <span id="user-info" class="user-info" hidden>
+          <span id="user-name"></span>님 환영합니다
+          <button id="logout-btn" class="btn btn-ghost btn-sm">로그아웃</button>
+        </span>
+        <button id="login-btn" class="btn btn-primary btn-sm">로그인</button>
+      </div>
     </div>
   </header>
 
@@ -61,12 +70,55 @@
 
   <footer class="site-footer">
     <div class="container">
-      <small>로컬 저장소에 저장되며 브라우저를 새로고침해도 유지됩니다.</small>
+      <small>Firebase Firestore에 저장되며 실시간으로 동기화됩니다.</small>
     </div>
   </footer>
 
+  <!-- Firebase SDK -->
+  <script type="module">
+    // Firebase 설정 정보
+    const firebaseConfig = {
+      apiKey: "AIzaSyD27jdPz8_5Tgujh_QgCPL_FA-Q2B7-wPk",
+      authDomain: "qna2-10524.firebaseapp.com",
+      projectId: "qna2-10524",
+      storageBucket: "qna2-10524.firebasestorage.app",
+      messagingSenderId: "21552847532",
+      appId: "1:21552847532:web:e04808b629c8cf6ca51d09",
+      measurementId: "G-H24E419Z3C"
+    };
+
+    // Firebase 초기화
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+    import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, updateDoc, onSnapshot, query, orderBy, where, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+    import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+    
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const auth = getAuth(app);
+    
+    // 전역 변수로 Firebase 인스턴스 제공
+    window.firebaseApp = { 
+      db, 
+      auth,
+      collection, 
+      addDoc, 
+      getDocs, 
+      deleteDoc, 
+      doc, 
+      updateDoc, 
+      onSnapshot, 
+      query, 
+      orderBy, 
+      where,
+      serverTimestamp,
+      signInWithPopup,
+      GoogleAuthProvider,
+      signOut,
+      onAuthStateChanged
+    };
+  </script>
+  
   <script src="script.js" defer></script>
   <noscript>이 앱을 사용하려면 자바스크립트를 활성화하세요.</noscript>
 </body>
 </html>
-
