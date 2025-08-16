@@ -2,8 +2,8 @@
   /**
    * Firebase Firestore + Auth 기반 Q&A 게시판
    * 데이터 모델
-   * Question: { id, title, body, author, authorId, createdAt, answers: Answer[] }
-   * Answer: { id, body, author, authorId, createdAt }
+   * Question: { id, title, body, author, authorId, createdAt }
+   * Answer: { id, body, author, authorId, createdAt, questionId }
    */
 
   // Firebase 인스턴스 가져오기
@@ -54,8 +54,8 @@
   /** @type {HTMLButtonElement} */
   const logoutBtn = document.getElementById('logout-btn');
 
-  /** @typedef {{id:string,title:string,body:string,author:string,authorId:string,createdAt:number,answers:Answer[]}} Question */
-  /** @typedef {{id:string,body:string,author:string,authorId:string,createdAt:number}} Answer */
+  /** @typedef {{id:string,title:string,body:string,author:string,authorId:string,createdAt:number}} Question */
+  /** @typedef {{id:string,body:string,author:string,authorId:string,createdAt:number,questionId:string}} Answer */
 
   let currentUser = null;
   let unsubscribeQuestions = null;
@@ -66,7 +66,7 @@
   const now = () => Date.now();
   const byNewest = (a, b) => b.createdAt - a.createdAt;
   const byOldest = (a, b) => a.createdAt - b.createdAt;
-  const byMostAnswers = (a, b) => (b.answers?.length || 0) - (a.answers?.length || 0);
+  const byMostAnswers = (a, b) => (b.answerCount || 0) - (a.answerCount || 0);
   const formatDate = (ts) => new Date(ts).toLocaleString();
   const uid = (prefix) => `${prefix}_${Math.random().toString(36).slice(2, 8)}_${Date.now().toString(36)}`;
 
@@ -105,7 +105,31 @@
       await signInWithPopup(auth, provider);
     } catch (error) {
       console.error('Google 로그인 실패:', error);
-      alert('로그인에 실패했습니다: ' + error.message);
+      
+      // 구체적인 에러 메시지 제공
+      let errorMessage = '로그인에 실패했습니다.';
+      
+      switch (error.code) {
+        case 'auth/unauthorized-domain':
+          errorMessage = '현재 도메인에서 로그인이 허용되지 않습니다. Firebase 콘솔에서 도메인을 승인해주세요.';
+          break;
+        case 'auth/configuration-not-found':
+          errorMessage = 'Firebase Authentication이 설정되지 않았습니다.';
+          break;
+        case 'auth/popup-blocked':
+          errorMessage = '팝업이 차단되었습니다. 브라우저에서 팝업을 허용해주세요.';
+          break;
+        case 'auth/cancelled-popup-request':
+          errorMessage = '로그인이 취소되었습니다.';
+          break;
+        case 'auth/network-request-failed':
+          errorMessage = '네트워크 연결을 확인하고 다시 시도해주세요.';
+          break;
+        default:
+          errorMessage = `로그인 오류: ${error.message}`;
+      }
+      
+      alert(errorMessage);
     }
   }
 
@@ -136,7 +160,7 @@
         questions.push({
           id: doc.id,
           ...data,
-          answers: data.answers || []
+          answerCount: data.answerCount || 0
         });
       });
       
@@ -160,7 +184,8 @@
       const docRef = await addDoc(questionsRef, {
         ...questionData,
         authorId: currentUser.uid,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        answerCount: 0
       });
       return docRef.id;
     } catch (e) {
@@ -189,6 +214,14 @@
         }
       }
 
+      // 질문과 관련된 모든 답변도 삭제
+      const answersRef = collection(db, 'answers');
+      const answersQuery = query(answersRef, where('questionId', '==', questionId));
+      const answersSnapshot = await getDocs(answersQuery);
+      
+      const deletePromises = answersSnapshot.docs.map(doc => deleteDoc(doc.ref));
+      await Promise.all(deletePromises);
+
       await deleteDoc(questionRef);
     } catch (e) {
       console.error('Failed to delete question', e);
@@ -197,7 +230,7 @@
   }
 
   /**
-   * Firebase에 답변 추가
+   * Firebase에 답변 추가 (별도 컬렉션 사용)
    */
   async function addAnswer(questionId, answerData) {
     try {
@@ -205,19 +238,25 @@
         throw new Error('로그인이 필요합니다.');
       }
 
-      const questionRef = doc(db, 'questions', questionId);
-      const question = await getDocs(query(collection(db, 'questions'), where('__name__', '==', questionId)));
+      // 답변을 별도 컬렉션에 저장
+      const answersRef = collection(db, 'answers');
+      const newAnswer = {
+        ...answerData,
+        questionId: questionId,
+        authorId: currentUser.uid,
+        createdAt: serverTimestamp() // ✅ 이제 serverTimestamp() 사용 가능
+      };
       
-      if (!question.empty) {
-        const questionData = question.docs[0].data();
-        const answers = questionData.answers || [];
-        answers.push({
-          ...answerData,
-          authorId: currentUser.uid,
-          createdAt: serverTimestamp()
-        });
-        
-        await updateDoc(questionRef, { answers });
+      await addDoc(answersRef, newAnswer);
+
+      // 질문의 답변 수 업데이트
+      const questionRef = doc(db, 'questions', questionId);
+      const questionDoc = await getDocs(query(collection(db, 'questions'), where('__name__', '==', questionId)));
+      
+      if (!questionDoc.empty) {
+        const questionData = questionDoc.docs[0].data();
+        const currentAnswerCount = questionData.answerCount || 0;
+        await updateDoc(questionRef, { answerCount: currentAnswerCount + 1 });
       }
     } catch (e) {
       console.error('Failed to add answer', e);
@@ -226,7 +265,31 @@
   }
 
   /**
-   * 실시간 데이터 구독
+   * 질문에 대한 답변 로드
+   */
+  async function loadAnswers(questionId) {
+    try {
+      const answersRef = collection(db, 'answers');
+      const q = query(answersRef, where('questionId', '==', questionId), orderBy('createdAt', 'asc'));
+      const snapshot = await getDocs(q);
+      
+      const answers = [];
+      snapshot.forEach((doc) => {
+        answers.push({
+          id: doc.id,
+          ...doc.data()
+        });
+      });
+      
+      return answers;
+    } catch (e) {
+      console.error('Failed to load answers', e);
+      return [];
+    }
+  }
+
+  /**
+   * 실시간 데이터 구독 (답변 포함)
    */
   function subscribeToQuestions() {
     if (unsubscribeQuestions) {
@@ -236,16 +299,19 @@
     const questionsRef = collection(db, 'questions');
     const q = query(questionsRef, orderBy('createdAt', 'desc'));
     
-    unsubscribeQuestions = onSnapshot(q, (snapshot) => {
+    unsubscribeQuestions = onSnapshot(q, async (snapshot) => {
       const questions = [];
-      snapshot.forEach((doc) => {
+      for (const doc of snapshot.docs) {
         const data = doc.data();
+        // 각 질문에 대한 답변을 별도로 로드
+        const answers = await loadAnswers(doc.id);
         questions.push({
           id: doc.id,
           ...data,
-          answers: data.answers || []
+          answers: answers,
+          answerCount: answers.length
         });
-      });
+      }
       
       renderQuestions(questions);
     }, (error) => {
