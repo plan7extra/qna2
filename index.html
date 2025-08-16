@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Q&A 게시판</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:,">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="질문을 올리고 서로 답변하는 간단한 Q&A 게시판">
+  <meta name="theme-color" content="#4f46e5">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <h1 class="logo">Q&A 게시판</h1>
+      <p class="subtitle">질문을 올리고 서로 답변해 보세요</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="ask-section card">
+      <h2>질문 올리기</h2>
+      <form id="ask-form" autocomplete="on">
+        <div class="form-grid">
+          <div class="form-row">
+            <label for="ask-author">작성자</label>
+            <input id="ask-author" name="author" type="text" placeholder="이름 또는 닉네임" required>
+          </div>
+          <div class="form-row">
+            <label for="ask-title">제목</label>
+            <input id="ask-title" name="title" type="text" placeholder="질문 제목" required>
+          </div>
+        </div>
+        <div class="form-row">
+          <label for="ask-body">내용</label>
+          <textarea id="ask-body" name="body" rows="5" placeholder="질문 내용을 입력하세요" required></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">질문 등록</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="list-section card">
+      <div class="list-header">
+        <h2>질문 목록</h2>
+        <div class="tools">
+          <input id="search-input" type="search" placeholder="검색 (제목/내용/작성자)">
+          <select id="sort-select" aria-label="정렬">
+            <option value="newest">최신순</option>
+            <option value="oldest">오래된순</option>
+            <option value="mostAnswers">답변 많은순</option>
+          </select>
+        </div>
+      </div>
+      <ul id="question-list" class="question-list" aria-live="polite"></ul>
+      <p id="empty-state" class="empty-state" hidden>등록된 질문이 없습니다. 첫 질문을 남겨보세요!</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <small>로컬 저장소에 저장되며 브라우저를 새로고침해도 유지됩니다.</small>
+    </div>
+  </footer>
+
+  <script src="script.js" defer></script>
+  <noscript>이 앱을 사용하려면 자바스크립트를 활성화하세요.</noscript>
+</body>
+</html>
+
