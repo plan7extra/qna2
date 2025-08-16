@@ -1,12 +1,31 @@
 (function () {
   /**
-   * 간단한 Q&A 게시판 - 로컬 저장소(localStorage) 기반
+   * Firebase Firestore + Auth 기반 Q&A 게시판
    * 데이터 모델
-   * Question: { id, title, body, author, createdAt, answers: Answer[] }
-   * Answer: { id, body, author, createdAt }
+   * Question: { id, title, body, author, authorId, createdAt, answers: Answer[] }
+   * Answer: { id, body, author, authorId, createdAt }
    */
 
-  const STORAGE_KEY = 'qa.board.v1';
+  // Firebase 인스턴스 가져오기
+  const { 
+    db, 
+    auth,
+    collection, 
+    addDoc, 
+    getDocs, 
+    deleteDoc, 
+    doc, 
+    updateDoc, 
+    onSnapshot, 
+    query, 
+    orderBy, 
+    where,
+    serverTimestamp,
+    signInWithPopup,
+    GoogleAuthProvider,
+    signOut,
+    onAuthStateChanged
+  } = window.firebaseApp;
 
   /** @type {HTMLFormElement} */
   const askForm = document.getElementById('ask-form');
@@ -24,9 +43,22 @@
   const questionList = document.getElementById('question-list');
   /** @type {HTMLElement} */
   const emptyState = document.getElementById('empty-state');
+  /** @type {HTMLElement} */
+  const authStatus = document.getElementById('auth-status');
+  /** @type {HTMLElement} */
+  const userInfo = document.getElementById('user-info');
+  /** @type {HTMLElement} */
+  const userName = document.getElementById('user-name');
+  /** @type {HTMLButtonElement} */
+  const loginBtn = document.getElementById('login-btn');
+  /** @type {HTMLButtonElement} */
+  const logoutBtn = document.getElementById('logout-btn');
 
-  /** @typedef {{id:string,title:string,body:string,author:string,createdAt:number,answers:Answer[]}} Question */
-  /** @typedef {{id:string,body:string,author:string,createdAt:number}} Answer */
+  /** @typedef {{id:string,title:string,body:string,author:string,authorId:string,createdAt:number,answers:Answer[]}} Question */
+  /** @typedef {{id:string,body:string,author:string,authorId:string,createdAt:number}} Answer */
+
+  let currentUser = null;
+  let unsubscribeQuestions = null;
 
   /**
    * Util functions
@@ -38,13 +70,77 @@
   const formatDate = (ts) => new Date(ts).toLocaleString();
   const uid = (prefix) => `${prefix}_${Math.random().toString(36).slice(2, 8)}_${Date.now().toString(36)}`;
 
-  function loadQuestions() {
+  /**
+   * 인증 상태 관리
+   */
+  function updateAuthUI(user) {
+    currentUser = user;
+    
+    if (user) {
+      // 로그인된 상태
+      userInfo.hidden = false;
+      loginBtn.hidden = true;
+      userName.textContent = user.displayName || user.email || '사용자';
+      
+      // 작성자 필드 자동 설정
+      askAuthorInput.value = user.displayName || user.email || '';
+      askAuthorInput.readOnly = true;
+    } else {
+      // 로그아웃된 상태
+      userInfo.hidden = true;
+      loginBtn.hidden = false;
+      
+      // 작성자 필드 초기화
+      askAuthorInput.value = '';
+      askAuthorInput.readOnly = false;
+    }
+  }
+
+  /**
+   * Google 로그인
+   */
+  async function signInWithGoogle() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return [];
-      const data = JSON.parse(raw);
-      if (!Array.isArray(data)) return [];
-      return data.map((q) => ({ ...q, answers: Array.isArray(q.answers) ? q.answers : [] }));
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (error) {
+      console.error('Google 로그인 실패:', error);
+      alert('로그인에 실패했습니다: ' + error.message);
+    }
+  }
+
+  /**
+   * 로그아웃
+   */
+  async function signOutUser() {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error('로그아웃 실패:', error);
+      alert('로그아웃에 실패했습니다: ' + error.message);
+    }
+  }
+
+  /**
+   * Firebase 데이터 로드
+   */
+  async function loadQuestions() {
+    try {
+      const questionsRef = collection(db, 'questions');
+      const q = query(questionsRef, orderBy('createdAt', 'desc'));
+      const snapshot = await getDocs(q);
+      
+      const questions = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        questions.push({
+          id: doc.id,
+          ...data,
+          answers: data.answers || []
+        });
+      });
+      
+      return questions;
     } catch (e) {
       console.error('Failed to load questions', e);
       return [];
@@ -52,33 +148,130 @@
   }
 
   /**
-   * @param {Question[]} questions
+   * Firebase에 질문 저장
    */
-  function saveQuestions(questions) {
+  async function saveQuestion(questionData) {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(questions));
+      if (!currentUser) {
+        throw new Error('로그인이 필요합니다.');
+      }
+
+      const questionsRef = collection(db, 'questions');
+      const docRef = await addDoc(questionsRef, {
+        ...questionData,
+        authorId: currentUser.uid,
+        createdAt: serverTimestamp()
+      });
+      return docRef.id;
     } catch (e) {
-      console.error('Failed to save questions', e);
+      console.error('Failed to save question', e);
+      throw e;
     }
   }
 
   /**
-   * Render
+   * Firebase에서 질문 삭제
    */
-  function render() {
+  async function deleteQuestion(questionId) {
+    try {
+      if (!currentUser) {
+        throw new Error('로그인이 필요합니다.');
+      }
+
+      // 자신이 작성한 질문만 삭제 가능
+      const questionRef = doc(db, 'questions', questionId);
+      const questionDoc = await getDocs(query(collection(db, 'questions'), where('__name__', '==', questionId)));
+      
+      if (!questionDoc.empty) {
+        const questionData = questionDoc.docs[0].data();
+        if (questionData.authorId !== currentUser.uid) {
+          throw new Error('자신이 작성한 질문만 삭제할 수 있습니다.');
+        }
+      }
+
+      await deleteDoc(questionRef);
+    } catch (e) {
+      console.error('Failed to delete question', e);
+      throw e;
+    }
+  }
+
+  /**
+   * Firebase에 답변 추가
+   */
+  async function addAnswer(questionId, answerData) {
+    try {
+      if (!currentUser) {
+        throw new Error('로그인이 필요합니다.');
+      }
+
+      const questionRef = doc(db, 'questions', questionId);
+      const question = await getDocs(query(collection(db, 'questions'), where('__name__', '==', questionId)));
+      
+      if (!question.empty) {
+        const questionData = question.docs[0].data();
+        const answers = questionData.answers || [];
+        answers.push({
+          ...answerData,
+          authorId: currentUser.uid,
+          createdAt: serverTimestamp()
+        });
+        
+        await updateDoc(questionRef, { answers });
+      }
+    } catch (e) {
+      console.error('Failed to add answer', e);
+      throw e;
+    }
+  }
+
+  /**
+   * 실시간 데이터 구독
+   */
+  function subscribeToQuestions() {
+    if (unsubscribeQuestions) {
+      unsubscribeQuestions();
+    }
+
+    const questionsRef = collection(db, 'questions');
+    const q = query(questionsRef, orderBy('createdAt', 'desc'));
+    
+    unsubscribeQuestions = onSnapshot(q, (snapshot) => {
+      const questions = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        questions.push({
+          id: doc.id,
+          ...data,
+          answers: data.answers || []
+        });
+      });
+      
+      renderQuestions(questions);
+    }, (error) => {
+      console.error('Failed to subscribe to questions', error);
+    });
+
+    return unsubscribeQuestions;
+  }
+
+  /**
+   * 질문 렌더링
+   */
+  function renderQuestions(questions) {
     const keyword = (searchInput?.value || '').trim().toLowerCase();
     const sort = sortSelect?.value || 'newest';
-    const questions = applySort(filterByKeyword(loadQuestions(), keyword), sort);
+    const filteredQuestions = applySort(filterByKeyword(questions, keyword), sort);
 
     questionList.innerHTML = '';
 
-    if (questions.length === 0) {
+    if (filteredQuestions.length === 0) {
       emptyState.hidden = false;
       return;
     }
     emptyState.hidden = true;
 
-    for (const q of questions) {
+    for (const q of filteredQuestions) {
       const li = document.createElement('li');
       li.className = 'question-item';
       li.dataset.id = q.id;
@@ -124,13 +317,15 @@
       const controls = document.createElement('div');
       controls.className = 'question-controls';
 
-      const deleteBtn = document.createElement('button');
-      deleteBtn.className = 'btn btn-ghost';
-      deleteBtn.type = 'button';
-      deleteBtn.textContent = '삭제';
-      deleteBtn.addEventListener('click', () => onDeleteQuestion(q.id));
-
-      controls.appendChild(deleteBtn);
+      // 자신이 작성한 질문만 삭제 버튼 표시
+      if (currentUser && q.authorId === currentUser.uid) {
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn btn-ghost';
+        deleteBtn.type = 'button';
+        deleteBtn.textContent = '삭제';
+        deleteBtn.addEventListener('click', () => onDeleteQuestion(q.id));
+        controls.appendChild(deleteBtn);
+      }
 
       const answers = document.createElement('div');
       answers.className = 'answers';
@@ -195,27 +390,43 @@
   /**
    * Actions
    */
-  function onCreateQuestion(e) {
+  async function onCreateQuestion(e) {
     e.preventDefault();
+    
+    if (!currentUser) {
+      alert('질문을 작성하려면 로그인이 필요합니다.');
+      return;
+    }
+
     const author = askAuthorInput.value.trim();
     const title = askTitleInput.value.trim();
     const body = askBodyInput.value.trim();
     if (!author || !title || !body) return;
 
-    const questions = loadQuestions();
-    questions.push({ id: uid('q'), author, title, body, createdAt: now(), answers: [] });
-    saveQuestions(questions);
+    try {
+      const questionData = {
+        author,
+        title,
+        body
+      };
 
-    askForm.reset();
-    render();
+      await saveQuestion(questionData);
+      askForm.reset();
+      askAuthorInput.value = currentUser.displayName || currentUser.email || '';
+    } catch (error) {
+      alert('질문 등록에 실패했습니다: ' + error.message);
+    }
   }
 
-  function onDeleteQuestion(id) {
+  async function onDeleteQuestion(id) {
     const ok = confirm('정말 이 질문을 삭제하시겠습니까?');
     if (!ok) return;
-    const questions = loadQuestions().filter((q) => q.id !== id);
-    saveQuestions(questions);
-    render();
+
+    try {
+      await deleteQuestion(id);
+    } catch (error) {
+      alert('질문 삭제에 실패했습니다: ' + error.message);
+    }
   }
 
   function createAnswerForm(questionId) {
@@ -230,6 +441,12 @@
     author.type = 'text';
     author.placeholder = '작성자';
     author.required = true;
+    
+    // 로그인된 사용자의 경우 자동 설정
+    if (currentUser) {
+      author.value = currentUser.displayName || currentUser.email || '';
+      author.readOnly = true;
+    }
 
     const body = document.createElement('input');
     body.type = 'text';
@@ -246,45 +463,64 @@
     form.appendChild(row);
     form.appendChild(submit);
 
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
+      
+      if (!currentUser) {
+        alert('답변을 작성하려면 로그인이 필요합니다.');
+        return;
+      }
+
       const a = author.value.trim();
       const b = body.value.trim();
       if (!a || !b) return;
-      const questions = loadQuestions();
-      const target = questions.find((q) => q.id === questionId);
-      if (!target) return;
-      target.answers.push({ id: uid('a'), author: a, body: b, createdAt: now() });
-      saveQuestions(questions);
-      render();
+
+      try {
+        const answerData = {
+          id: uid('a'),
+          author: a,
+          body: b
+        };
+
+        await addAnswer(questionId, answerData);
+        form.reset();
+        if (currentUser) {
+          author.value = currentUser.displayName || currentUser.email || '';
+        }
+      } catch (error) {
+        alert('답변 등록에 실패했습니다: ' + error.message);
+      }
     });
 
     return form;
   }
 
-  function initDemoIfEmpty() {
-    const qs = loadQuestions();
-    if (qs.length > 0) return;
-    const demo = [
-      { id: uid('q'), title: '예시) 자바스크립트에서 배열 정렬은 어떻게 하나요?', body: 'sort 메서드 사용법과 주의할 점이 궁금합니다.', author: '홍길동', createdAt: now() - 86400000, answers: [
-        { id: uid('a'), body: 'compare 함수를 넘겨 사용하는 것을 권장합니다.', author: '유저1', createdAt: now() - 86000000 },
-        { id: uid('a'), body: '문자열 정렬 시 localeCompare를 고려해 보세요.', author: '유저2', createdAt: now() - 85000000 }
-      ]},
-      { id: uid('q'), title: 'CSS Grid와 Flex의 차이가 뭔가요?', body: '레이아웃을 만들 때 어떤 기준으로 선택해야 할까요?', author: '김코딩', createdAt: now() - 3600000, answers: [] }
-    ];
-    saveQuestions(demo);
-  }
-
   function bindEvents() {
     askForm?.addEventListener('submit', onCreateQuestion);
-    searchInput?.addEventListener('input', () => render());
-    sortSelect?.addEventListener('change', () => render());
+    searchInput?.addEventListener('input', () => {
+      // 실시간 검색을 위해 전체 데이터를 다시 렌더링
+      subscribeToQuestions();
+    });
+    sortSelect?.addEventListener('change', () => {
+      // 실시간 정렬을 위해 전체 데이터를 다시 렌더링
+      subscribeToQuestions();
+    });
+    
+    // 인증 관련 이벤트
+    loginBtn?.addEventListener('click', signInWithGoogle);
+    logoutBtn?.addEventListener('click', signOutUser);
   }
 
   function init() {
-    initDemoIfEmpty();
     bindEvents();
-    render();
+    
+    // 인증 상태 변경 감지
+    onAuthStateChanged(auth, (user) => {
+      updateAuthUI(user);
+      
+      // 실시간 데이터 구독 시작
+      subscribeToQuestions();
+    });
   }
 
   if (document.readyState === 'loading') {
@@ -293,5 +529,3 @@
     init();
   }
 })();
-
-
