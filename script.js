@@ -281,7 +281,8 @@
   async function loadAnswers(questionId) {
     try {
       const answersRef = collection(db, 'answers');
-      const q = query(answersRef, where('questionId', '==', questionId), orderBy('createdAt', 'asc'));
+      // ✅ 임시 해결책: orderBy 제거하여 인덱스 없이 쿼리
+      const q = query(answersRef, where('questionId', '==', questionId));
       const snapshot = await getDocs(q);
       
       const answers = [];
@@ -290,6 +291,13 @@
           id: doc.id,
           ...doc.data()
         });
+      });
+      
+      // ✅ 클라이언트에서 정렬 (인덱스 불필요)
+      answers.sort((a, b) => {
+        const aTime = a.createdAt?.toDate?.() || a.createdAt || 0;
+        const bTime = b.createdAt?.toDate?.() || b.createdAt || 0;
+        return aTime - bTime;
       });
       
       // ✅ 디버깅 로그 추가
@@ -339,6 +347,12 @@
          renderQuestions(questionsWithAnswers);
        }).catch((error) => {
          console.error('❌ 답변 로딩 실패:', error);
+         
+         // ✅ 인덱스 에러인 경우 특별 처리
+         if (error.message.includes('index') || error.message.includes('Index')) {
+           console.warn('⚠️ Firestore 인덱스가 아직 생성 중입니다. 기본 데이터로 렌더링합니다.');
+         }
+         
          // 에러가 발생해도 기본 질문 데이터는 렌더링
          const basicQuestions = snapshot.docs.map(doc => ({
            id: doc.id,
