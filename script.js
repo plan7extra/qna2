@@ -67,7 +67,15 @@
   const byNewest = (a, b) => b.createdAt - a.createdAt;
   const byOldest = (a, b) => a.createdAt - b.createdAt;
   const byMostAnswers = (a, b) => (b.answerCount || 0) - (a.answerCount || 0);
-  const formatDate = (ts) => new Date(ts).toLocaleString();
+  const formatDate = (ts) => {
+    if (!ts) return '날짜 없음';
+    // serverTimestamp()가 아직 처리되지 않은 경우
+    if (ts.toDate) {
+      return ts.toDate().toLocaleString();
+    }
+    // 일반 timestamp인 경우
+    return new Date(ts).toLocaleString();
+  };
   const uid = (prefix) => `${prefix}_${Math.random().toString(36).slice(2, 8)}_${Date.now().toString(36)}`;
 
   /**
@@ -305,37 +313,45 @@
     const questionsRef = collection(db, 'questions');
     const q = query(questionsRef, orderBy('createdAt', 'desc'));
     
-    unsubscribeQuestions = onSnapshot(q, (snapshot) => {
-      const questions = [];
-      const loadAnswersPromises = snapshot.docs.map(async (doc) => {
-        const data = doc.data();
-        // 각 질문에 대한 답변을 별도로 로드
-        const answers = await loadAnswers(doc.id);
-        return {
-          id: doc.id,
-          ...data,
-          answers: answers,
-          answerCount: answers.length
-        };
-      });
-      
-      // 모든 답변 로딩이 완료된 후 렌더링
-      Promise.all(loadAnswersPromises).then((questionsWithAnswers) => {
-        renderQuestions(questionsWithAnswers);
-      }).catch((error) => {
-        console.error('Failed to load answers for questions', error);
-        // 에러가 발생해도 기본 질문 데이터는 렌더링
-        const basicQuestions = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          answers: [],
-          answerCount: 0
-        }));
-        renderQuestions(basicQuestions);
-      });
-    }, (error) => {
-      console.error('Failed to subscribe to questions', error);
-    });
+         unsubscribeQuestions = onSnapshot(q, (snapshot) => {
+       console.log('🔥 질문 데이터 변경 감지:', snapshot.docs.length, '개');
+       
+       const questions = [];
+       const loadAnswersPromises = snapshot.docs.map(async (doc) => {
+         const data = doc.data();
+         console.log(`📝 질문 ${doc.id} 데이터:`, data);
+         
+         // 각 질문에 대한 답변을 별도로 로드
+         const answers = await loadAnswers(doc.id);
+         console.log(`💬 질문 ${doc.id}의 답변 ${answers.length}개 로드 완료`);
+         
+         return {
+           id: doc.id,
+           ...data,
+           answers: answers,
+           answerCount: answers.length
+         };
+       });
+       
+       // 모든 답변 로딩이 완료된 후 렌더링
+       Promise.all(loadAnswersPromises).then((questionsWithAnswers) => {
+         console.log('🎯 모든 질문과 답변 로딩 완료:', questionsWithAnswers);
+         renderQuestions(questionsWithAnswers);
+       }).catch((error) => {
+         console.error('❌ 답변 로딩 실패:', error);
+         // 에러가 발생해도 기본 질문 데이터는 렌더링
+         const basicQuestions = snapshot.docs.map(doc => ({
+           id: doc.id,
+           ...doc.data(),
+           answers: [],
+           answerCount: 0
+         }));
+         console.log('⚠️ 기본 질문 데이터로 렌더링:', basicQuestions);
+         renderQuestions(basicQuestions);
+       });
+     }, (error) => {
+       console.error('❌ 질문 구독 실패:', error);
+     });
 
     return unsubscribeQuestions;
   }
@@ -419,18 +435,38 @@
       answersHeader.textContent = `답변 (${q.answers.length})`;
 
       const answersWrap = document.createElement('div');
-      for (const a of q.answers) {
-        const ans = document.createElement('div');
-        ans.className = 'answer';
-        const meta = document.createElement('div');
-        meta.className = 'answer-meta';
-        meta.textContent = `${a.author} · ${formatDate(a.createdAt)}`;
-        const body = document.createElement('div');
-        body.className = 'answer-body';
-        body.textContent = a.body;
-        ans.appendChild(meta);
-        ans.appendChild(body);
-        answersWrap.appendChild(ans);
+      
+      // ✅ 디버깅: 답변 데이터 확인
+      console.log(`Question ${q.id}의 답변 데이터:`, q.answers);
+      
+      if (q.answers && q.answers.length > 0) {
+        for (const a of q.answers) {
+          console.log('답변 렌더링 중:', a);
+          const ans = document.createElement('div');
+          ans.className = 'answer';
+          
+          const meta = document.createElement('div');
+          meta.className = 'answer-meta';
+          meta.textContent = `${a.author || '작성자 없음'} · ${formatDate(a.createdAt)}`;
+          
+          const body = document.createElement('div');
+          body.className = 'answer-body';
+          body.textContent = a.body || '내용 없음';
+          
+          ans.appendChild(meta);
+          ans.appendChild(body);
+          answersWrap.appendChild(ans);
+        }
+      } else {
+        // 답변이 없을 때 메시지 표시
+        const noAnswerMsg = document.createElement('div');
+        noAnswerMsg.className = 'no-answer';
+        noAnswerMsg.textContent = '아직 답변이 없습니다.';
+        noAnswerMsg.style.color = '#666';
+        noAnswerMsg.style.fontStyle = 'italic';
+        noAnswerMsg.style.padding = '12px';
+        noAnswerMsg.style.textAlign = 'center';
+        answersWrap.appendChild(noAnswerMsg);
       }
 
       const answerForm = createAnswerForm(q.id);
