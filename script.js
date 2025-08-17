@@ -258,6 +258,9 @@
         const currentAnswerCount = questionData.answerCount || 0;
         await updateDoc(questionRef, { answerCount: currentAnswerCount + 1 });
       }
+
+      // ✅ 답변 추가 후 즉시 화면 업데이트를 위해 구독 재시작
+      subscribeToQuestions();
     } catch (e) {
       console.error('Failed to add answer', e);
       throw e;
@@ -281,6 +284,9 @@
         });
       });
       
+      // ✅ 디버깅 로그 추가
+      console.log(`Question ${questionId}의 답변 ${answers.length}개 로드됨:`, answers);
+      
       return answers;
     } catch (e) {
       console.error('Failed to load answers', e);
@@ -299,21 +305,34 @@
     const questionsRef = collection(db, 'questions');
     const q = query(questionsRef, orderBy('createdAt', 'desc'));
     
-    unsubscribeQuestions = onSnapshot(q, async (snapshot) => {
+    unsubscribeQuestions = onSnapshot(q, (snapshot) => {
       const questions = [];
-      for (const doc of snapshot.docs) {
+      const loadAnswersPromises = snapshot.docs.map(async (doc) => {
         const data = doc.data();
         // 각 질문에 대한 답변을 별도로 로드
         const answers = await loadAnswers(doc.id);
-        questions.push({
+        return {
           id: doc.id,
           ...data,
           answers: answers,
           answerCount: answers.length
-        });
-      }
+        };
+      });
       
-      renderQuestions(questions);
+      // 모든 답변 로딩이 완료된 후 렌더링
+      Promise.all(loadAnswersPromises).then((questionsWithAnswers) => {
+        renderQuestions(questionsWithAnswers);
+      }).catch((error) => {
+        console.error('Failed to load answers for questions', error);
+        // 에러가 발생해도 기본 질문 데이터는 렌더링
+        const basicQuestions = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          answers: [],
+          answerCount: 0
+        }));
+        renderQuestions(basicQuestions);
+      });
     }, (error) => {
       console.error('Failed to subscribe to questions', error);
     });
@@ -595,3 +614,4 @@
     init();
   }
 })();
+
